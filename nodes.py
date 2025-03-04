@@ -28,6 +28,20 @@ from comfy.clip_vision import clip_preprocess, ClipVisionModel
 
 script_directory = os.path.dirname(os.path.abspath(__file__))
 
+current_device = "cuda:0"
+
+def get_torch_device_patched():
+    global current_device
+    if (
+        not torch.cuda.is_available()
+        or comfy.model_management.cpu_state == comfy.model_management.CPUState.CPU
+    ):
+        return torch.device("cpu")
+
+    return torch.device(current_device)
+
+comfy.model_management.get_torch_device = get_torch_device_patched
+
 def add_noise_to_reference_video(image, ratio=None):
     sigma = torch.ones((image.shape[0],)).to(image.device, image.dtype) * ratio 
     image_noise = torch.randn_like(image) * sigma[:, None, None, None]
