@@ -28,6 +28,20 @@ from comfy.clip_vision import clip_preprocess, ClipVisionModel
 
 script_directory = os.path.dirname(os.path.abspath(__file__))
 
+current_device = "cuda:0"
+
+def get_torch_device_patched():
+    global current_device
+    if (
+        not torch.cuda.is_available()
+        or comfy.model_management.cpu_state == comfy.model_management.CPUState.CPU
+    ):
+        return torch.device("cpu")
+
+    return torch.device(current_device)
+
+comfy.model_management.get_torch_device = get_torch_device_patched
+
 def add_noise_to_reference_video(image, ratio=None):
     sigma = torch.ones((image.shape[0],)).to(image.device, image.dtype) * ratio 
     image_noise = torch.randn_like(image) * sigma[:, None, None, None]
@@ -255,7 +269,7 @@ class WanVideoModelLoader:
 
             "base_precision": (["fp32", "bf16", "fp16", "fp16_fast"], {"default": "bf16"}),
             "quantization": (['disabled', 'fp8_e4m3fn', 'fp8_e4m3fn_fast', 'fp8_e5m2', 'torchao_fp8dq', "torchao_fp8dqrow", "torchao_int8dq", "torchao_fp6", "torchao_int4", "torchao_int8"], {"default": 'disabled', "tooltip": "optional quantization method"}),
-            "load_device": (["main_device", "offload_device"], {"default": "main_device"}),
+            "device": ([f"cuda:{i}" for i in range(torch.cuda.device_count())] + ["main_device", "offload_device"], {"default": "main_device"}),
             },
             "optional": {
                 "attention_mode": ([
@@ -278,8 +292,16 @@ class WanVideoModelLoader:
     FUNCTION = "loadmodel"
     CATEGORY = "WanVideoWrapper"
 
-    def loadmodel(self, model, base_precision, load_device,  quantization,
+    def loadmodel(self, model, base_precision, device, quantization,
                   compile_args=None, attention_mode="sdpa", block_swap_args=None, lora=None, vram_management_args=None):
+        global current_device
+        if device in ["main_device", "offload_device"]:
+            load_device = device
+            device = mm.get_torch_device()
+        else:
+            current_device = device
+            load_device = device
+            
         assert not (vram_management_args is not None and block_swap_args is not None), "Can't use both block_swap_args and vram_management_args at the same time"        
         transformer = None
         mm.unload_all_models()
@@ -532,6 +554,7 @@ class WanVideoVAELoader:
         return {
             "required": {
                 "model_name": (folder_paths.get_filename_list("vae"), {"tooltip": "These models are loaded from 'ComfyUI/models/vae'"}),
+                "device": ([f"cuda:{i}" for i in range(torch.cuda.device_count())] + ["main_device", "offload_device"], {"default": "main_device"}),
             },
             "optional": {
                 "precision": (["fp16", "fp32", "bf16"],
@@ -546,7 +569,12 @@ class WanVideoVAELoader:
     CATEGORY = "WanVideoWrapper"
     DESCRIPTION = "Loads Hunyuan VAE model from 'ComfyUI/models/vae'"
 
-    def loadmodel(self, model_name, precision, compile_args=None):
+    def loadmodel(self, model_name, device, precision, compile_args=None):
+        global current_device
+        if device in ["main_device", "offload_device"]:
+            device = mm.get_torch_device()
+        else:
+            current_device = device
         from .wanvideo.wan_video_vae import WanVideoVAE
 
         device = mm.get_torch_device()
@@ -616,10 +644,10 @@ class LoadWanVideoT5TextEncoder:
                 "precision": (["fp16", "fp32", "bf16"],
                     {"default": "bf16"}
                 ),
+                "device": ([f"cuda:{i}" for i in range(torch.cuda.device_count())] + ["main_device", "offload_device"], {"default": "offload_device"}),
             },
             "optional": {
-                "load_device": (["main_device", "offload_device"], {"default": "offload_device"}),
-                 "quantization": (['disabled', 'fp8_e4m3fn'], {"default": 'disabled', "tooltip": "optional quantization method"}),
+                "quantization": (['disabled', 'fp8_e4m3fn'], {"default": 'disabled', "tooltip": "optional quantization method"}),
             }
         }
 
@@ -629,7 +657,14 @@ class LoadWanVideoT5TextEncoder:
     CATEGORY = "WanVideoWrapper"
     DESCRIPTION = "Loads Hunyuan text_encoder model from 'ComfyUI/models/LLM'"
 
-    def loadmodel(self, model_name, precision, load_device="offload_device", quantization="disabled"):
+    def loadmodel(self, model_name, precision, device="offload_device", quantization="disabled"):
+        global current_device
+        if device in ["main_device", "offload_device"]:
+            load_device = device
+            device = mm.get_torch_device()
+        else:
+            current_device = device
+            load_device = device
        
         device = mm.get_torch_device()
         offload_device = mm.unet_offload_device()
@@ -667,9 +702,7 @@ class LoadWanVideoClipTextEncoder:
                  "precision": (["fp16", "fp32", "bf16"],
                     {"default": "fp16"}
                 ),
-            },
-            "optional": {
-                "load_device": (["main_device", "offload_device"], {"default": "offload_device"}),
+                "device": ([f"cuda:{i}" for i in range(torch.cuda.device_count())] + ["main_device", "offload_device"], {"default": "offload_device"}),
             }
         }
 
@@ -679,7 +712,14 @@ class LoadWanVideoClipTextEncoder:
     CATEGORY = "WanVideoWrapper"
     DESCRIPTION = "Loads Hunyuan text_encoder model from 'ComfyUI/models/LLM'"
 
-    def loadmodel(self, model_name, precision, load_device="offload_device"):
+    def loadmodel(self, model_name, precision, device="offload_device"):
+        global current_device
+        if device in ["main_device", "offload_device"]:
+            load_device = device
+            device = mm.get_torch_device()
+        else:
+            current_device = device
+            load_device = device
        
         device = mm.get_torch_device()
         offload_device = mm.unet_offload_device()
